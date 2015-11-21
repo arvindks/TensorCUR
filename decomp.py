@@ -13,6 +13,8 @@ __all__ = ['CP',\
 	'sthosvd',\
 	'hoid',\
 	'sthoid',\
+	'sthoid_svd',\
+	'sthoid_svd2',\
 	'tensor_to_id',\
 	'plotindlst']
 
@@ -97,24 +99,33 @@ class Tucker:
 			self.rank = (0,0,0)
 			self.shape = np.array([0,0,0])
 
-	def lowrank_matricize(self):
+	def lowrank_matricize(self, method = 'modemult'):
 
 		G, U = self.G, self.U
-		
 		ndim = self.ndim	
-	
 		vlst = []
-		modes = matricize(dtensor(G))
-		for d, mode in zip(range(ndim),modes):
-			lst = [U[i] for i in (range(d) + range(d+1, ndim))] 
-			v = dot(mode, kron(lst, reverse = True).conj().T)
-			vlst.append(v)
+		if method == 'kron':
+			modes = matricize(dtensor(G))
+			for d, mode in zip(range(ndim),modes):
+				lst = [U[i] for i in (range(d) + range(d+1, ndim))] 
+				v = dot(mode, kron(lst, reverse = True).conj().T)
+				vlst.append(v)
+		elif method == 'modemult':
+			
+			for d in range(ndim):
+				lst = [U[i] for i in (range(d) + range(d+1, ndim))] 
+				v = G.ttm(lst, mode = list(range(d) + range(d+1, ndim))).unfold(d)
+				vlst.append(v)
+		else: 
+			raise NotImplementedError	
+
+
 		return U, vlst	
 
 
-	def matricize(self):	
+	def matricize(self, method = 'modemult'):	
 
-		ulst, vlst = self.lowrank_matricize()
+		ulst, vlst = self.lowrank_matricize(method)
 		modes = [dot(u,v) for u,v in zip(ulst,vlst)]
 	
 		return modes
@@ -315,69 +326,9 @@ def sthoid(T, rank = None,  method = 'rrqr', compute_core = True):
 	rank:	(r_1,...,r_d) int array, optional
 		Ranks of the individual modes	
 
-	method:	{'qr','randsvd'} string, optional
-		qr uses pivoted QR, 'interpolative' uses scipy.linalg.interpolative
-		Uses 'qr' by default
-	
-	compute_core: bool, optional
-		Compute core tensor by projection. True by default
-
-	Returns:
-	--------
-	T:	object of Tucker class
-		G - core, U - list of mode vectors, I - index list. 
-	
-	"""
-
-	dim   = T.ndim
-
-	#Core tensor and orthonormal factors
-	clst, indlst = [], []
-	G = dtensor(T)
-	for d in range(dim):
-		mode = G.unfold(d)
-		r = rank[d]
-		
-		if method == 'qr':
-			p, _ = id_(mode, r)
-		elif method == 'rrqr':
-			_,_,p = srrqr(mode, r)
-		elif method == 'rid':
-			rpp = mode.shape[0] + 10	#Oversampling factor
-			Omega = np.random.randn(rpp,mode.shape[0])
-			ind, _ = interp_decomp(np.dot(Omega,mode), eps_or_k, rand = False)
-			p = ind[:eps_or_k]
-		elif method == 'randsvd':
-			ind, _ = interp_decomp(mode, r)
-			p = ind[:r]
-		else:
-			raise NotImplementedError
-
-
-		c = mode[:, p]
-		clst.append(c)
-		indlst.append(p)
-
-		#Recompute the core tensor (slightly more expensive)
-		G = G.ttm(pinv(c, 1.e-8), d, transp = False)		
-
-	return Tucker(G = G, U = clst, I = indlst)	
-
-
-def sthoid_svd(T, rank = None,  method = 'rrqr', compute_core = True):
-	"""
-	Compute STHOID but uses ST_HOSVD and then uses RRQR/DIME 
-	Parameters:
-	-----------
-	T:	(I_1,...,I_d) dtensor
-		object of dtensor class. See scikit.dtensor
-	
-	rank:	(r_1,...,r_d) int array, optional
-		Ranks of the individual modes	
-
-	method:	{'qr','randsvd'} string, optional
-		qr uses pivoted QR, 'interpolative' uses scipy.linalg.interpolative
-		Uses 'qr' by default
+	method:	{'rrqr'(default),'dime'} string, optional
+		deim uses DEIM method, dime uses pivoted QR, rrqr uses RRQR, 'lev' uses leverage scores approach
+		Uses 'rrqr' by default
 	
 	compute_core: bool, optional
 		Compute core tensor by projection. True by default
@@ -393,41 +344,138 @@ def sthoid_svd(T, rank = None,  method = 'rrqr', compute_core = True):
 	assert (rank is not None) or (eps is not None)
 
 	#Core tensor and orthonormal factors
-	clst, indlst = [], []
+	ulst, indlst, modeerr = [], [], []
+	
 	G = dtensor(T)
 	for d in range(dim):
 		mode = G.unfold(d)
 		r = rank[d]
-		u, s, vh = svdtruncate(mode, r)
-	
-		v = vh[:r,:].conj().T
-
+		u, _, vh = svdtruncate(mode, r); v = vh.conj().T;
 		
 		if method == 'rrqr':
 			_, _, p = srrqr(v.conj().T, r)
+			fact = norm(inv(v[p,:]))
 		elif method == 'deim':
-			q, fact = deim(v)
+			p, fact = deim(v)
 		elif method == 'dime':
-			q, fact = dime(v)
+			p, fact = dime(v)
 		else:
 			raise NotImplementedError
 
-		c = mode[:, p]
+		c = T.unfold(d)[:, p]
+
+		G = G.ttm(pinv(c, rcond = 1.e-8), d)		
+		if d > 0:
+			Tk = G.ttm(ulst, mode = list(range(d))).unfold(d)
+			_, _, v = lowrank_to_svd(c, Tk.conj().T)
+		ulst.append(c)
+		indlst.append(p)
+		modeerr.append(fact)
+	
+	return Tucker(G = G, U = ulst, I = indlst), modeerr
+
+
+
+
+def sthoid_svd(T, rank = None,  method = 'rrqr', compute_core = True):
+	"""
+	Compute STHOID but uses ST_HOSVD and then uses RRQR/DIME 
+	Parameters:
+	-----------
+	T:	(I_1,...,I_d) dtensor
+		object of dtensor class. See scikit.dtensor
+	
+	rank:	(r_1,...,r_d) int array, optional
+		Ranks of the individual modes	
+
+	method:	{'rrqr'(default),'dime'} string, optional
+		deim uses DEIM method, dime uses pivoted QR, rrqr uses RRQR, 'lev' uses leverage scores approach
+		Uses 'rrqr' by default
+	
+	compute_core: bool, optional
+		Compute core tensor by projection. True by default
+
+	Returns:
+	--------
+	T:	object of Tucker class
+		G - core, U - list of mode vectors, I - index list. 
+	
+	"""
+
+	dim   = T.ndim
+	assert (rank is not None) or (eps is not None)
+
+	#Core tensor and orthonormal factors
+	ulst, clst, indlst, modeerr = [], [], [], []
+	
+	G = dtensor(T)
+	for d in range(dim):
+		mode = G.unfold(d)
+		r = rank[d]
+		u, _, vh = svdtruncate(mode, r); v = vh.conj().T;
+
+
+		G = G.ttm(u, d, transp = True)		
+		if d > 0:
+			Tk = G.ttm(ulst, mode = list(range(d))).unfold(d)
+			_, _, v = lowrank_to_svd(u, Tk.conj().T)
+		ulst.append(u)
+	
+		if method == 'rrqr':
+			_, _, p = srrqr(v.conj().T, r)
+			fact = norm(inv(v[p,:]))
+		elif method == 'deim':
+			p, fact = deim(v)
+		elif method == 'dime':
+			p, fact = dime(v)
+		else:
+			raise NotImplementedError
+
+		c = T.unfold(d)[:, p]
 		clst.append(c)
 		indlst.append(p)
-
-		#Recompute the core tensor (slightly more expensive)
-		G = G.ttm(u, d, transp = True)		
-		
+		modeerr.append(fact)
 	
 	#Compute core tensor
 	if compute_core:
-		cinv = [pinv(c, 1.e-8) for c in clst]
+		cinv = [pinv(c, rcond = 1.e-8) for c in clst]
 		G = T.ttm(cinv)
-		return Tucker(G = G, U = clst, I = indlst)
+		return Tucker(G = G, U = clst, I = indlst), modeerr
 	else:
-		return clst
+		return clst, modeerr
+
+
+def sthoid_svd2(T, rank = None,  method = 'rrqr', compute_core = True):
+	"""
+	Compute STHOID but uses ST_HOSVD and then uses RRQR/DIME 
+	Parameters:
+	-----------
+	T:	(I_1,...,I_d) dtensor
+		object of dtensor class. See scikit.dtensor
 	
+	rank:	(r_1,...,r_d) int array, optional
+		Ranks of the individual modes	
+
+	method:	{'rrqr','r'} string, optional
+		qr uses pivoted QR, 'interpolative' uses scipy.linalg.interpolative
+		Uses 'qr' by default
+	
+	compute_core: bool, optional
+		Compute core tensor by projection. True by default
+
+	Returns:
+	--------
+	T:	object of Tucker class
+		G - core, U - list of mode vectors, I - index list. 
+	
+	"""
+
+	dim   = T.ndim
+	
+	Tt = sthosvd(T, rank)
+	return tensor_to_id(T, Tt, rank, method = method, compute_core = compute_core)
+
+
 def tensor_to_id(full, T, rank, method = 'deim', compute_core = True, **kwargs):
 	"""
 	Parameters:
@@ -435,15 +483,15 @@ def tensor_to_id(full, T, rank, method = 'deim', compute_core = True, **kwargs):
 	full:	(I_1,...,I_d) dtensor
 		object of dtensor class. See scikit.dtensor
 
-
 	T:	(I_1,...,I_d) 
 		object of CP/Tucker class. Low-rank representation
 	
 	rank:	(r_1,...,r_d) int array, optional
 		Ranks of the individual modes	
 
-	method:	{'deim','dime'} string, optional
-		'deim' uses the DEIM approach, 'dime' uses DIME approach. 
+	method:	{'deim','dime','rrqr','lev'} string, optional
+		'deim' uses the DEIM approach, 'dime' uses Pivoted QR approach, 'rrqr' uses strong rank-revealing QR, \
+			'lev' uses leverage score sampling
 		See lowrank.py for details	
 		
 	compute_core: bool, optional
@@ -501,6 +549,7 @@ def tensor_to_id(full, T, rank, method = 'deim', compute_core = True, **kwargs):
 		indlst.append(q)
 
 	modeerr = tuple(modeerr)
+
 
 	#Compute core tensor
 	if compute_core:

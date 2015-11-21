@@ -33,7 +33,7 @@ def ten_id(A, r, method = 'svd'):
 		T = hoid(A, rank, method = 'rrqr') 
 
 	elif method == 'stid':
-		T = sthoid(A, rank, method = 'rrqr') 
+		T,_ = sthoid(A, rank, method = 'rrqr') 
 
 	else:
 		raise NotImplementedError
@@ -108,15 +108,18 @@ def test1(A, maxr = 10, fname = 'hilbert'):
 	for r in np.arange(maxr):
 		err_s[r] = ten_id(A, r = r+1, method = 'svd')
 		err_r[r] = ten_id(A, r = r+1, method = 'randsvd')
-		err_r[r] = ten_id(A, r = r+1, method = 'pqr')
+		err_p[r] = ten_id(A, r = r+1, method = 'pqr')
 		err_i[r], _ = ten_id(A, r = r+1, method = 'id')
 		err_st[r] = ten_id(A, r = r+1, method = 'stid')
+
+
+
 
 	plt.figure()
 	plt.semilogy(np.arange(maxr)+1, err_s, 'k-', linewidth = 2.)
 	plt.semilogy(np.arange(maxr)+1, err_r, 'g-', linewidth = 2.)
 	plt.semilogy(np.arange(maxr)+1, err_i, 'r--', linewidth = 2.)
-	plt.semilogy(np.arange(maxr)+1, err_p, 'c-', linewidth = 2.)
+	plt.semilogy(np.arange(maxr)+1, err_p, 'c.-', linewidth = 2.)
 	plt.semilogy(np.arange(maxr)+1, err_st, 'm-', linewidth = 2.)
 	plt.legend(('HOSVD', 'HORID', 'HOID - RRQR', 'HOID - PQR', 'STHOID'))
 	plt.xlabel('Rank [r]', fontsize = 18.)
@@ -183,7 +186,7 @@ def test2(A, maxr = 10, fname = 'hilbert', ns = 10):
 	plt.figure()
 	
 	plt.semilogy(np.arange(maxr)+1, err_deim, 'k-', linewidth = 3.)
-	plt.semilogy(np.arange(maxr)+1, err_dime, 'c-', linewidth = 2.)
+	plt.semilogy(np.arange(maxr)+1, err_dime, 'c.-', linewidth = 2.)
 	plt.semilogy(np.arange(maxr)+1, err_rrqr, 'r--', linewidth = 2.)
 	plt.semilogy(np.arange(maxr)+1, err_lev, 'b-', linewidth = 2.)
 	plt.legend(('DEIM', 'PQR', 'RRQR', 'Lev'), loc = 3)
@@ -270,7 +273,7 @@ def example2(n = 20, opt = 1, ns = 10, visualize = False):
 
 	#Generate Tucker factorization
 	T = generate_tensor(n = n, opt = 1)
-	modes = T.matricize()
+	modes = T.matricize(method = 'kron')
 	
 	#Generate full tensor
 	A = dtensor(np.reshape(np.array(modes[0]),(n,n,n)))
@@ -306,7 +309,7 @@ if __name__ == '__main__':
 	plt.close('all')
 	
 	
-	example1(n = 50)
-	example2(n = 50, opt = 1, ns = -1)	
-	example2b(n = 50, opt = 1)	
+	example1(n = 50, visualize = False)
+	#example2(n = 50, opt = 1, ns = -1)	
+	#example2b(n = 50, opt = 1)	
 	plt.show()

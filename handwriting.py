@@ -101,15 +101,14 @@ def hosvd_classifier(A, test, truth, err= False, m = 32, n = 32, k = 15):
 	return acc
 
 
-def cur_classifier(A, test, truth, method = 'hoid', qr = 'randsvd', err = False, \
+def cur_classifier(A, test, truth, method = 'hoid', qr = 'dime', err = False, \
 			m = 32, n = 32, k = 15):
 	start = time()
 	if method == 'hoid':
 		T = hoid(A, rank = (m,n,10), method = qr) 
 	elif method == 'sthoid':
-		T = sthoid(A, rank = (m,n,10), method = qr) 
+		T, _ = sthoid_svd(A, rank = (m,n,10), method = qr) 
 	print "Time for computing HOID is %g" %(time()-start)		
-
 	
 	if err:
 		am = A.unfold(0)
@@ -160,10 +159,10 @@ if __name__ == '__main__':
 
 	#acc = cur_classifier(A, test, truth, err = True, m = 64, n = 142, k = 30)
 	#print acc
-	acc = cur_classifier(A, test, truth, err = True, m = 64, n = 142, k = 30, qr = 'rid')
-	print acc
+	#acc = cur_classifier(A, test, truth, err = True, m = 64, n = 142, k = 30, qr = 'rid')
+	#print acc
 
-	#acc = cur_classifier(A, test, truth, err = True, \
-	#		m = 64, n = 142, k = 30, method = 'sthoid')
-	#print acc	
+	acc = cur_classifier(A, test, truth, err = True, \
+			m = 64, n = 142, k = 30, method = 'sthoid')
+	print acc	
 
